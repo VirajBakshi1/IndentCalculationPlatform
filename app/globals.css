@@ -1,0 +1,85 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+
+:root {
+  --steel-900: #102a43;
+  --steel-800: #243b53;
+  --steel-700: #334e68;
+  --steel-600: #486581;
+  --steel-500: #627d98;
+  --steel-400: #829ab1;
+  --steel-300: #9fb3c8;
+  --steel-200: #bcccdc;
+  --steel-100: #d9e2ec;
+  --steel-50: #f0f4f8;
+  --amber-500: #f59e0b;
+  --amber-400: #fbbf24;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  font-family: 'Inter', system-ui, sans-serif;
+  background-color: #f8fafc;
+  color: #1e293b;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: #f1f5f9;
+}
+::-webkit-scrollbar-thumb {
+  background: #94a3b8;
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #64748b;
+}
+
+/* Drag highlight */
+.drag-active {
+  border-color: #2563eb !important;
+  background-color: #eff6ff !important;
+}
+
+/* Status badge */
+.badge-matched {
+  @apply inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-emerald-50 text-emerald-700 border border-emerald-200;
+}
+
+.badge-unmatched {
+  @apply inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-amber-50 text-amber-700 border border-amber-200;
+}
+
+/* Processing step animations */
+@keyframes pulse-dot {
+  0%, 80%, 100% { transform: scale(0.8); opacity: 0.5; }
+  40% { transform: scale(1); opacity: 1; }
+}
+
+.processing-dot {
+  animation: pulse-dot 1.4s ease-in-out infinite;
+}
+.processing-dot:nth-child(2) { animation-delay: 0.2s; }
+.processing-dot:nth-child(3) { animation-delay: 0.4s; }
+
+/* Table row hover */
+.data-row:hover {
+  background-color: #f8fafc;
+}
+
+/* Number cells */
+.num-cell {
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  font-size: 0.8125rem;
+}

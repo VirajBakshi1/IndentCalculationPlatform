@@ -1,0 +1,276 @@
+================================================================================
+  STEEL INDENT AUTOMATION — CALCULATION FORMULAS & SCENARIOS
+================================================================================
+  File: lib/material-classifier.ts
+  Last reviewed: 2026-03-28
+================================================================================
+
+
+────────────────────────────────────────────────────────────────────────────────
+PART 1 — HR SECTIONS
+────────────────────────────────────────────────────────────────────────────────
+
+WHAT COUNTS AS A SECTION:
+  Profiles starting with: ISA, ISMC, ISMB, ISHT, UB, UC, TS
+  Examples: ISA65X65X6, ISMC150, UB356x171x57, TS32NB3.2
+
+STEP 1 — ACCUMULATE TOTAL LENGTH PER PROFILE
+  For each MTO row identified as a section:
+    totalLength  += qty × length_mm
+    totalWeight  += totalWeight_column  (or qty × weightPerPc if totalWeight is blank)
+
+  Profiles are matched in a case-insensitive, space-insensitive, symbol-insensitive
+  way (ISA 65×65×6 = ISA65X65X6 = ISA65*65*6 = isa65x65x6).
+
+STEP 2 — REQUIRED PIECES
+  Standard length is read from the indent template for that profile.
+  If the profile is not in the template, standard length defaults to 12,000 mm.
+
+    requiredPieces = CEILING( totalLength / standardLength )
+
+STEP 3 — TOTAL WEIGHT (MT)
+  CASE A — Profile found in indent template:
+    totalWeight_MT = (standardLength / 1000) × unitWeight_kg_per_m
+                     × requiredPieces / 1000
+
+    Excel equivalent: = (C × B × D) / 1,000,000
+      where C = standardLength (mm), B = unitWeight (kg/m), D = requiredPieces
+
+  CASE B — Profile NOT in indent template:
+    totalWeight_MT = accumulatedWeight_kg / 1000
+    (uses the raw MTO weight directly, no rounding to standard lengths)
+
+OUTPUT COLUMNS:
+  Profile | Grade | Std Length (mm) | Total Required (mm) | Qty (Nos) | Weight (MT)
+
+
+────────────────────────────────────────────────────────────────────────────────
+PART 2 — HR PLATES
+────────────────────────────────────────────────────────────────────────────────
+
+Plates come from THREE sources in the MTO:
+  (a) Explicit plate profiles  — PL* and PLT* rows
+  (b) Plate Girder flanges     — PG* rows (top flange + bottom flange)
+  (c) Plate Girder webs        — PG* rows (web plate)
+
+All three are grouped together by THICKNESS into a single pool per thickness.
+
+────────────────────────────────────────────────────────────────────────────────
+2A — EXPLICIT PLATES (PL* / PLT*)
+────────────────────────────────────────────────────────────────────────────────
+
+PROFILE FORMAT:
+  PL<thk>*<width>   →  e.g. PL10*250   (thickness=10mm, width=250mm)
+  PLT<thk>*<width>  →  e.g. PLT25*600  (thickness=25mm, width=600mm)
+  PL<thk>           →  e.g. PL12        (thickness only; width taken from Length column)
+
+VOLUME FORMULA:
+  cutWidth  = width from profile name   (if width > 0)
+            = length from MTO           (fallback when only thickness is given)
+  cutLength = length from MTO           (if length > 0)
+            = width from profile name   (fallback)
+
+  volume_mm3 = cutLength × cutWidth × thickness × qty
+
+This volume is added to the accumulator for that thickness.
+
+────────────────────────────────────────────────────────────────────────────────
+2B — PLATE GIRDERS (PG*)
+────────────────────────────────────────────────────────────────────────────────
+
+PROFILE FORMAT (symmetric):
+  PG<flangeW>*<flangeThk>-<webH>*<webThk>
+  Example: PG600*45-1160*32
+    → top flange:    600 mm wide × 45 mm thick
+    → bottom flange: 600 mm wide × 45 mm thick  (same as top — symmetric)
+    → web:           1160 mm tall × 32 mm thick
+
+PROFILE FORMAT (asymmetric):
+  PG<topFlangeW>*<topFlangeThk>-<webH>*<webThk>-<botFlangeW>*<botFlangeThk>
+  Example: PG400*32-736*16-350*32
+    → top flange:    400 mm wide × 32 mm thick
+    → bottom flange: 350 mm wide × 32 mm thick  (different width from top)
+    → web:           736 mm tall × 16 mm thick
+
+VOLUME FORMULAS (per MTO row, for qty girders of given length):
+
+  Top Flange volume (mm³)    = topFlangeWidth × length × topFlangeThk × qty
+  Bottom Flange volume (mm³) = botFlangeWidth × length × botFlangeThk × qty
+  Web volume (mm³)           = webHeight      × length × webThk        × qty
+
+Each volume is added to the accumulator for its own thickness:
+  topFlangeThk  → added to thickness group [topFlangeThk]
+  botFlangeThk  → added to thickness group [botFlangeThk]
+  webThk        → added to thickness group [webThk]
+
+NOTE: If top and bottom flange are the same thickness, both volumes are added
+      to the SAME thickness group (they add up correctly).
+
+EXAMPLE — PG600*45-1110*32, qty=4, length=12000mm:
+  Top flange vol    = 600 × 12000 × 45 × 4   = 1,296,000,000 mm³  → 45mm pool
+  Bottom flange vol = 600 × 12000 × 45 × 4   = 1,296,000,000 mm³  → 45mm pool
+  Web vol           = 1110 × 12000 × 32 × 4  = 1,706,112,000 mm³  → 32mm pool
+
+ITEMS SKIPPED (not processed for plates):
+  Grating (GRTG*), misc items with no parseable PG format — these are
+  handled via separate procurement and are excluded from the indent.
+
+────────────────────────────────────────────────────────────────────────────────
+2C — PLATE GROUP CALCULATION (per thickness)
+────────────────────────────────────────────────────────────────────────────────
+
+After accumulating all volumes per thickness, each group is converted to an
+ordered plate requirement.
+
+STANDARD PLATE WIDTHS (Indian steel mill standard sizes):
+  thickness ≥ 30 mm  →  standardWidth = 2500 mm  (heavy HR plates)
+  thickness <  30 mm  →  standardWidth = 2000 mm  (light / medium HR plates)
+
+STANDARD PLATE LENGTH:  maxLength = 12,000 mm
+
+SCRAP FACTOR:  10%  (applied only when more than one full plate is needed)
+
+STEP 1 — NET AREA REQUIRED
+  totalArea_mm2 = totalVolume_mm3 / thickness
+
+STEP 2 — SINGLE PLATE vs MULTIPLE PLATES
+
+  standardPlateArea = maxLength × standardWidth   (= 12000 × 2500 or 12000 × 2000)
+
+  SCENARIO A — Small requirement (fits within ONE standard plate):
+    Condition:  totalArea ≤ standardPlateArea
+    Action:     Order one custom-cut plate at exact length needed; NO scrap added.
+
+    orderedLength   = CEILING( totalArea / standardWidth )   [mm, exact]
+    requiredPlates  = 1
+
+  SCENARIO B — Large requirement (needs MULTIPLE standard plates):
+    Condition:  totalArea > standardPlateArea
+    Action:     Order full-length (12000mm) plates; apply 10% scrap factor.
+
+    orderedLength   = 12,000 mm
+    requiredPlates  = CEILING( (totalArea × 1.10) / standardPlateArea )
+
+STEP 3 — ORDERED WEIGHT
+  totalWeight_MT = (orderedLength × standardWidth × thickness × requiredPlates × 7.85)
+                   / 1,000,000,000
+
+  Steel density = 7.85 g/cm³ = 7.85 × 10⁻⁶ kg/mm³
+  Dividing by 1e9 converts mm³ × density → metric tonnes (MT)
+
+  Excel equivalent: = (F × D × C × B × 7.85) / 10⁹
+    where F = orderedLength (mm), D = standardWidth (mm),
+          C = thickness (mm), B = requiredPlates
+
+OUTPUT COLUMNS:
+  Thickness (mm) | Grade | Std Size (mm) | Total Volume (mm³) | Qty (Nos) | Weight (MT)
+
+
+────────────────────────────────────────────────────────────────────────────────
+PART 3 — SUMMARY OF ALL SCENARIOS
+────────────────────────────────────────────────────────────────────────────────
+
+┌──────────────────┬────────────────────────────────────────────────────────────┐
+│ Row Type         │ How it is processed                                        │
+├──────────────────┼────────────────────────────────────────────────────────────┤
+│ ISA, ISMC, UB,   │ Grouped by profile. Total length accumulated.              │
+│ UC, ISMB, ISHT,  │ requiredPieces = CEIL(totalLength / standardLength)        │
+│ TS (Sections)    │ Weight from indent template unit weight × pieces.          │
+├──────────────────┼────────────────────────────────────────────────────────────┤
+│ PL*, PLT*        │ Volume = cutLength × cutWidth × thickness × qty            │
+│ (Explicit Plates)│ Added to thickness pool. Ordered as standard plates.       │
+├──────────────────┼────────────────────────────────────────────────────────────┤
+│ PG* — symmetric  │ 3 components per girder unit:                              │
+│ (Plate Girder)   │   top flange → flangeW × L × flangeThk × qty → flangeThk  │
+│                  │   bot flange → same as top (symmetric) → flangeThk pool    │
+│                  │   web       → webH × L × webThk × qty → webThk pool       │
+├──────────────────┼────────────────────────────────────────────────────────────┤
+│ PG* — asymmetric │ Same as symmetric but top and bottom flanges differ:       │
+│ (Plate Girder)   │   top flange → topW × L × topThk × qty → topThk pool      │
+│                  │   bot flange → botW × L × botThk × qty → botThk pool      │
+│                  │   web        → webH × L × webThk × qty → webThk pool      │
+├──────────────────┼────────────────────────────────────────────────────────────┤
+│ GRTG*, unknown   │ SKIPPED. Not part of steel indent.                         │
+│ misc profiles    │ Procured separately.                                        │
+└──────────────────┴────────────────────────────────────────────────────────────┘
+
+
+┌──────────────────────┬───────────────────────────────────────────────────────┐
+│ Plate Order Scenario │ Rule & Formula                                         │
+├──────────────────────┼───────────────────────────────────────────────────────┤
+│ Single custom plate  │ totalArea ≤ (12000 × standardWidth)                   │
+│                      │ orderedLength = CEIL(totalArea / standardWidth)        │
+│                      │ qty = 1 plate, NO scrap factor applied                 │
+│                      │ Weight = L × W × thk × 1 × 7.85 / 1e9  [MT]          │
+├──────────────────────┼───────────────────────────────────────────────────────┤
+│ Multiple std plates  │ totalArea > (12000 × standardWidth)                   │
+│                      │ orderedLength = 12,000 mm (full standard length)       │
+│                      │ qty = CEIL((totalArea × 1.10) / (12000 × stdWidth))   │
+│                      │ Weight = 12000 × W × thk × qty × 7.85 / 1e9  [MT]    │
+└──────────────────────┴───────────────────────────────────────────────────────┘
+
+
+┌────────────────┬──────────────────────────────────────────────────────────────┐
+│ Thickness      │ Standard Width Used for Ordering                             │
+├────────────────┼──────────────────────────────────────────────────────────────┤
+│ ≥ 30 mm        │ 2500 mm   (e.g. 30, 32, 36, 40, 45, 50, 56, 63 mm plates)  │
+│ < 30 mm        │ 2000 mm   (e.g. 5, 6, 8, 10, 12, 16, 20, 25 mm plates)     │
+└────────────────┴──────────────────────────────────────────────────────────────┘
+
+
+────────────────────────────────────────────────────────────────────────────────
+PART 4 — CONSTANTS & PARAMETERS
+────────────────────────────────────────────────────────────────────────────────
+
+  Steel density             :  7.85 g/cm³  =  7.85 × 10⁻⁶ kg/mm³
+  Standard plate max length :  12,000 mm
+  Standard plate width (thk ≥ 30 mm)  :  2,500 mm
+  Standard plate width (thk <  30 mm)  :  2,000 mm
+  Scrap / cutting waste factor         :  10%  (applied only for multi-plate orders)
+  Default standard section length      :  12,000 mm (if not found in indent template)
+  Default material grade               :  E250  (if not specified in MTO)
+
+
+────────────────────────────────────────────────────────────────────────────────
+PART 5 — WEIGHT FORMULA DERIVATION
+────────────────────────────────────────────────────────────────────────────────
+
+For any rectangular steel plate:
+  Weight (kg) = Length(mm) × Width(mm) × Thickness(mm) × 7.85 / 1,000,000
+  Weight (MT) = Length(mm) × Width(mm) × Thickness(mm) × 7.85 / 1,000,000,000
+
+For sections:
+  Weight (MT) = StandardLength(mm) / 1000 × UnitWeight(kg/m) × Qty / 1000
+              = StandardLength(mm) × UnitWeight(kg/m) × Qty / 1,000,000
+
+Both formulas match standard Indian fabrication industry practice and the
+client's Excel template (Plate_Calculation sheet).
+
+
+────────────────────────────────────────────────────────────────────────────────
+PART 6 — NOTES ON CLIENT'S DRAFT CALCULATOR (PG_CALC SHEET)
+────────────────────────────────────────────────────────────────────────────────
+
+The client's Draft Calculator tracks ONLY PG web plate weights, grouped into
+4 specific web thicknesses: 16mm, 20mm, 32mm, 40mm.
+
+Client's PG_CALC formula (for web weight in kg):
+  webWeight_kg = webDepth × length × tw × qty × 7.85 / 1,000,000
+
+PG profiles whose web thickness is NOT 16/20/32/40mm (e.g. 10mm, 12mm, 25mm)
+are NOT tracked in PG_CALC — they contribute 0 to those columns.
+
+PG FLANGE weights are NOT tracked in PG_CALC at all.
+
+This Draft Calculator is a PARTIAL verification tool only. The full indent
+(as seen in Plate_Calculation sheet) includes BOTH flange and web plates from
+all PG profiles, plus all explicit PL* plates.
+
+Known data entry issue in client's PG_CALC:
+  PG400*32-736*16-350*32 → tw field = 0 (should be 16), so its web weight
+  is not counted in the 16mm column. The correct 16mm web weight including
+  this profile is ~8,288 kg (client's PG_CALC shows 6,810 kg).
+
+================================================================================
+END OF DOCUMENT
+================================================================================

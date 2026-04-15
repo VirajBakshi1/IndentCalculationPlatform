@@ -1,0 +1,129 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ─── Auth (NextAuth adapter tables) ──────────────────────────────────────────
+
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String? @db.Text
+  access_token      String? @db.Text
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String? @db.Text
+  session_state     String?
+  user              User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+}
+
+// ─── Users ───────────────────────────────────────────────────────────────────
+
+model User {
+  id        String          @id @default(cuid())
+  email     String          @unique
+  name      String?
+  password  String?         // bcrypt hash — null for OAuth users
+  role      Role            @default(USER)
+  createdAt DateTime        @default(now())
+  updatedAt DateTime        @updatedAt
+  accounts  Account[]
+  sessions  Session[]
+  logs      ProcessingLog[]
+}
+
+enum Role {
+  USER
+  ADMIN
+}
+
+// ─── Admin Email Whitelist ────────────────────────────────────────────────────
+
+model AdminEmail {
+  id      String   @id @default(cuid())
+  email   String   @unique
+  addedBy String
+  addedAt DateTime @default(now())
+}
+
+// ─── Configuration ────────────────────────────────────────────────────────────
+
+model Config {
+  id          String          @id @default(cuid())
+  key         String          @unique
+  value       String
+  type        ConfigType
+  label       String
+  description String?
+  group       String          // "general" | "sections" | "plates"
+  unit        String?
+  updatedBy   String?
+  updatedAt   DateTime        @updatedAt
+  createdAt   DateTime        @default(now())
+  history     ConfigHistory[]
+}
+
+enum ConfigType {
+  NUMBER
+  STRING
+  BOOLEAN
+}
+
+model ConfigHistory {
+  id        String   @id @default(cuid())
+  configId  String
+  key       String
+  oldValue  String
+  newValue  String
+  changedBy String
+  changedAt DateTime @default(now())
+  config    Config   @relation(fields: [configId], references: [id], onDelete: Cascade)
+}
+
+// ─── Processing Logs ──────────────────────────────────────────────────────────
+
+model ProcessingLog {
+  id            String    @id @default(cuid())
+  userId        String?
+  userEmail     String?
+  filename      String
+  status        LogStatus
+  totalWeightKg Float?
+  sectionCount  Int?
+  plateCount    Int?
+  totalMembers  Int?
+  errorMsg      String?   @db.Text
+  processingMs  Int?
+  createdAt     DateTime  @default(now())
+  user          User?     @relation(fields: [userId], references: [id], onDelete: SetNull)
+}
+
+enum LogStatus {
+  SUCCESS
+  FAILED
+}

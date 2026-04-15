@@ -1,0 +1,65 @@
+Start with MTO (Material Take-Off)
+MTO comes from drawings / Tekla / design department. It lists all parts required for fabrication.                      Planner first verifies:
+Material grade (ex: IS2062 / SA516 / SS304)
+Thickness
+Quantity
+Drawing revision                                                                                                                                                                  
+Group Parts by Thickness & Material, Plates are purchased by thickness, so planners group all parts. This helps prepare material requirement per thickness                                                                                                                                   Calculate Total Area / Weight, Planner estimates material required. Area = Width × Length × Quantity. Convert Area into Plate Requirement. Assume standard plate size:6000 × 2000 = 12,000,000 mm²          Add 10–15% scrap allowance for cutting loss.  Prepare Material Indent. Send Data for Nesting & Cutting Plan.                                                                                                                                                                                     MTO → Nesting Software → Plate Layout → CNC Cutting Plan.                                                                         Common nesting software: SigmaNEST, ProNest, Lantek                                                                                       Summary: Drawing → MTO → Area Calculation → Plate Requirement → Indent → Nesting → Cutting
+Weight Formula for Plate / Part
+
+Standard steel density = 7.85
+
+Formula (in kg)
+𝑊
+𝑒
+𝑖
+𝑔
+ℎ
+𝑡
+=
+𝐿
+𝑒
+𝑛
+𝑔
+𝑡
+ℎ
+×
+𝑊
+𝑖
+𝑑
+𝑡
+ℎ
+×
+𝑇
+ℎ
+𝑖
+𝑐
+𝑘
+𝑛
+𝑒
+𝑠
+𝑠
+×
+7.85
+1000000
+Weight=
+1000000
+Length×Width×Thickness×7.85
+Units: Length = mm; Width = mm; Thickness = mm
+Result = kg
+
+Width = C2
+Length = D2
+Thickness = B2
+
+Excel formula: =(C2*D2*B2*7.85)/1000000
+Convert kg to Metric Ton (MT)=Weight_kg/1000
+=((C2*D2*B2*7.85)/1000000)/1000
+Plate Weight Formula (Common in Fabrication); plate size = 6000 × 2000 × 12 mm; so weight formula = 6000×2000×12×7.85/1000000; 1130 kg ≈ 1.13 MT
+Simplified formula = Weight (kg) = Area × Thickness × 7.85
+Plate area = 6 × 2 = 12 m²
+Weight = 12 × 0.012 × 7850
+Weight = 1130 kg
+In my excel indent; =(Thickness*Width*Length*Qty*7.85)/1000000000
+This directly gives MT without converting kg
+similary there are formulas in excel, for HR (Hot rolled) sections, refer excel of indentshared

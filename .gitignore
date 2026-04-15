@@ -1,0 +1,19 @@
+# Dependencies
+node_modules/
+
+# Build output
+.next/
+out/
+
+# Environment variables — never commit secrets
+.env
+.env.local
+.env.*.local
+
+# Prisma generated client (generated at build time)
+/lib/generated/prisma
+
+# Misc
+.DS_Store
+*.tsbuildinfo
+tsconfig.tsbuildinfo

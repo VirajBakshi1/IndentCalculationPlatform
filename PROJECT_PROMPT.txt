@@ -1,0 +1,265 @@
+
+
+
+─── WHAT THIS PROJECT IS ───────────────────────────────────────────────────────
+
+This is a Next.js 15 web application (TypeScript + Tailwind CSS) built for a
+steel fabrication company. Its sole purpose is to automate the creation of a
+"Steel Indent" Excel document from a "Material Take-Off" (MTO) Excel/CSV file.
+
+In the fabrication workflow:
+  1. Structural engineers produce a DRAWING
+  2. From the drawing a MATERIAL TAKE-OFF (MTO) is prepared — a list of every
+     steel member needed: profile name, quantity, length, weight, grade
+  3. From the MTO the procurement team creates a STEEL INDENT — a formal
+     purchase order template showing how many standard-length sections and how
+     many standard-size plates need to be ordered from the steel mill
+  4. The indent goes to NESTING → CUTTING → FABRICATION
+
+This app automates step 3. The user uploads an MTO Excel file, fills in basic
+project details, clicks Generate, and downloads the completed indent Excel.
+
+
+─── TECH STACK ─────────────────────────────────────────────────────────────────
+
+  Framework    : Next.js 15 (App Router)
+  Language     : TypeScript
+  Styling      : Tailwind CSS
+  Excel read   : xlsx (SheetJS) — for parsing the uploaded MTO file
+  Excel write  : ExcelJS — for reading and writing the indent template
+  Deployment   : Vercel-compatible (single API route handles all processing)
+
+
+─── FILE STRUCTURE (important files only) ──────────────────────────────────────
+
+  app/
+    page.tsx                    — Main UI (upload, project details, results)
+    api/process-mto/route.ts    — POST endpoint that does all the work
+
+  lib/
+    types.ts                    — All TypeScript interfaces
+    mto-parser.ts               — Reads any MTO Excel/CSV, auto-detects columns
+    material-classifier.ts      — Groups sections and plates, runs all formulas
+    indent-generator.ts         — Fills the indent Excel template, returns buffer
+
+  templates/
+    indent_template.xlsx        — The client's standard indent Excel format
+                                  (MUST NOT be changed — structure is fixed)
+
+  components/
+    UploadArea.tsx              — Drag-and-drop file upload
+    ProjectDetails.tsx          — Project number, date, phase, SAP fields
+    ProcessingIndicator.tsx     — Step-by-step progress animation
+    ResultsDashboard.tsx        — Summary stat cards after processing
+    MaterialTable.tsx           — Tabbed table showing sections and plates
+
+
+─── HOW THE API WORKS (route.ts) ───────────────────────────────────────────────
+
+  1. Receive multipart POST: MTO file + projectDetails JSON
+  2. Validate file type (.xlsx / .xls / .csv only)
+  3. parseMTO(buffer)            → array of MTORow objects
+  4. parseIndentTemplate()       → reads standard lengths & unit weights from
+                                   the locked indent template
+  5. classifySectionsAndPlates() → groups everything, runs all formulas
+  6. calculateStats()            → totals for the dashboard
+  7. generateIndent()            → writes results into the template, returns buffer
+  8. Return JSON: { stats, sections, plates, excelBase64, filename }
+
+
+─── MTO PARSER (mto-parser.ts) ─────────────────────────────────────────────────
+
+  - Accepts .xlsx, .xls, .csv
+  - Auto-detects the header row (scans first 20 rows, picks the one with the
+    most recognisable column names)
+  - Auto-detects column positions using fuzzy matching (handles varied naming
+    like "Qty", "Quantity", "Nos", "Pcs" all mapping to the qty column)
+  - Required columns: Profile, Qty, Length(mm)
+  - Optional columns: Grade, Weight/Pc, Total Weight, Area, Phase No, Remarks
+  - Classifies each row as "section", "plate", or "unknown"
+
+  Row type classification:
+    section  → ISA, ISMB, ISMC, ISHB, UB, UC, TS, RHS, SHS, CHS, HEA, HEB…
+    plate    → PL*, PLT*, PLATE, CHKR, CHQ, CHEQUERED
+    unknown  → PG* (plate girders), GRTG* (grating), anything else
+
+
+─── MATERIAL CLASSIFIER (material-classifier.ts) ───────────────────────────────
+
+  This is the core calculation engine.
+
+  ── SECTIONS ──
+
+  All section rows with the same profile are merged (case-insensitive,
+  symbol-insensitive: ISA65X65X6 = ISA 65*65*6 = isa65x65x6).
+
+  Total length = SUM(qty × length_mm) across all rows for that profile
+  Required pieces = CEILING(totalLength / standardLength)
+    Standard length comes from the indent template; defaults to 12,000 mm.
+
+  Weight (MT) = standardLength(mm) × unitWeight(kg/m) × requiredPieces
+                ─────────────────────────────────────────────────────────
+                                    1,000,000
+
+  ── PLATES ──
+
+  Plates come from three sources — all grouped by THICKNESS into one pool:
+
+  SOURCE 1: Explicit PL* / PLT* rows
+    volume (mm³) = cutLength × cutWidth × thickness × qty
+    cutWidth  = width parsed from profile name (PL10*250 → 250mm)
+    cutLength = length from MTO Length column
+
+  SOURCE 2: Plate Girder FLANGES (PG* rows)
+    Format: PG{flangeW}*{flangeThk}-{webH}*{webThk}
+    Asymmetric: PG{topFlangeW}*{topFlangeThk}-{webH}*{webThk}-{botFlangeW}*{botFlangeThk}
+
+    topFlange volume  = topFlangeWidth × length × topFlangeThk × qty  → topFlangeThk pool
+    botFlange volume  = botFlangeWidth × length × botFlangeThk × qty  → botFlangeThk pool
+
+  SOURCE 3: Plate Girder WEBS (PG* rows)
+    web volume = webHeight × length × webThk × qty  → webThk pool
+
+  Grating (GRTG*) and other unknown profiles are SKIPPED entirely.
+
+  ── PLATE GROUP CALCULATION ──
+
+  For each thickness group, after all volumes are accumulated:
+
+  Standard plate width:
+    thickness ≥ 30 mm → 2500 mm wide  (heavy plates, Indian mill standard)
+    thickness <  30 mm → 2000 mm wide  (light/medium plates)
+
+  Standard plate length: 12,000 mm
+  Scrap factor: 10% (only on multi-plate orders)
+
+  totalArea (mm²) = totalVolume / thickness
+
+  SCENARIO A — Small order (totalArea ≤ 12000 × standardWidth):
+    One custom-cut plate, no scrap applied.
+    orderedLength  = CEILING(totalArea / standardWidth)    [exact mm]
+    requiredPlates = 1
+
+  SCENARIO B — Large order (totalArea > 12000 × standardWidth):
+    Multiple full-length standard plates, 10% scrap applied.
+    orderedLength  = 12,000 mm
+    requiredPlates = CEILING( (totalArea × 1.10) / (12000 × standardWidth) )
+
+  Weight (MT) = orderedLength × standardWidth × thickness × requiredPlates × 7.85
+                ─────────────────────────────────────────────────────────────────
+                                        1,000,000,000
+
+  Steel density = 7.85 g/cm³ = 7.85 × 10⁻⁶ kg/mm³
+
+
+─── INDENT GENERATOR (indent-generator.ts) ─────────────────────────────────────
+
+  - Opens the locked indent_template.xlsx using ExcelJS
+  - Writes project details into header cells (B1, B2, I2, I3)
+  - Section rows (template rows 7–29): matches by profile name, writes
+    Qty (col C) and Qty in MT (col F). Unmatched rows get 0.
+  - Plate rows (template rows 34–48): matches by thickness, writes
+    Length (col A), Width (col B), Qty (col C), Qty in MT (col F).
+    Unmatched thickness rows get 0.
+  - Total rows (30 for sections, 49 for plates) are updated with sums.
+  - Returns the filled workbook as a Buffer → base64 encoded for the client.
+
+  IMPORTANT: Cell formatting, formulas, merged cells, and styles from the
+  original template are preserved. Only the numeric values are overwritten.
+
+
+─── INDENT TEMPLATE STRUCTURE ──────────────────────────────────────────────────
+
+  Sheet 1 (the only relevant sheet):
+
+  Rows 1–3   : Project header (project no, date, phase, SAP number)
+  Row 4      : "HR Sections" category header
+  Rows 5–6   : Column headers
+               Col A = Length (mm)
+               Col B = Unit Weight (kg/m)
+               Col C = Qty in Nos
+               Col D = Material Grade
+               Col E = Material (profile name)
+               Col F = Qty in MT
+  Rows 7–29  : Section data rows (one profile per row)
+  Row 30     : Section total
+  Row 31     : Spacer
+  Row 32     : "HR Plates" category header
+  Row 33     : Column headers
+               Col A = Length (mm)
+               Col B = Width (mm)
+               Col C = Qty in Nos
+               Col D = Material Grade
+               Col E = Thickness (mm)
+               Col F = Qty in MT
+  Rows 34–48 : Plate data rows (one thickness per row)
+  Row 49     : Plate total
+
+
+─── KEY CONSTANTS ───────────────────────────────────────────────────────────────
+
+  Steel density              : 7.85 g/cm³
+  Standard section length    : 12,000 mm (default; template value takes priority)
+  Standard plate length      : 12,000 mm
+  Standard plate width (≥30mm thick) : 2,500 mm
+  Standard plate width (<30mm thick) : 2,000 mm
+  Cutting scrap factor       : 10% (multi-plate orders only)
+  Default grade              : E250 (if not specified in MTO)
+
+
+─── WHAT THE OUTPUT LOOKS LIKE ─────────────────────────────────────────────────
+
+  The app returns:
+    stats.totalUniqueProfiles  : number of distinct section profiles + plate thicknesses
+    stats.totalMembers         : total piece count (sum of all qty in MTO)
+    stats.totalWeight          : total steel weight in kg (from MTO weight columns)
+    stats.totalPlateArea       : total plate area in m²
+
+    sections[]  : sorted A-Z by profile name
+      { profile, grade, standardLength, totalLength, requiredPieces,
+        unitWeight, totalWeight(MT) }
+
+    plates[]    : sorted by thickness descending (thickest first)
+      { thickness, grade, totalVolume, standardWidth, standardLength,
+        requiredPlates, totalWeight(MT) }
+
+    excelBase64 : the completed indent Excel file as a base64 string
+    filename    : e.g. "Steel_Indent_C252_20260416.xlsx"
+
+
+─── WHAT IS OUT OF SCOPE ────────────────────────────────────────────────────────
+
+  - Grating panels (GRTG*): skipped, procured separately
+  - Chequered plates handled as regular plates (PL/CHKR prefix)
+  - The app does NOT do nesting or cutting plan optimization
+  - The app does NOT validate structural adequacy
+  - The app processes ONLY the first sheet of the uploaded MTO file
+  - Multiple phases in one MTO file are all processed together (no filtering)
+
+
+─── KNOWN FACTS / DECISIONS MADE ───────────────────────────────────────────────
+
+  - PG flange plates AND web plates are BOTH included in the plate calculation.
+    The client's Draft Calculator only tracks web plates for verification of
+    specific thicknesses (16mm, 20mm, 32mm, 40mm), but the full indent includes
+    both. This is confirmed by the client's own Plate_Calculation sheet.
+
+  - For PG400*32-736*16-350*32: this is an asymmetric girder. Our parser
+    correctly reads top flange=400×32, web=736×16, bottom flange=350×32.
+    The client's Draft Calculator has a data entry error (tw=0) for this row
+    so their 16mm web total is slightly understated — our value is correct.
+
+  - The scrap factor (10%) is applied only when more than one full standard
+    plate is needed. Single custom-cut pieces are ordered at exact size,
+    no waste allowance.
+
+  - Plate width threshold: 30mm is the boundary. Plates 30mm and above use
+    2500mm wide stock; plates below 30mm use 2000mm wide stock. This matches
+    the client's own Plate_Calculation output where 25mm → 2000mm, 30mm → 2500mm.
+
+  - Section name normalisation: all separators (×, *, space) are converted to
+    "X" and the string is uppercased, so ISA 65×65×6 matches ISA65X65X6.
+
+================================================================================
+END OF PROMPT
+================================================================================
