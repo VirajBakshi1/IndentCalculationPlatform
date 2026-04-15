@@ -3,7 +3,9 @@ import CredentialsProvider from "next-auth/providers/credentials";
 import { PrismaAdapter } from "@auth/prisma-adapter";
 import bcrypt from "bcryptjs";
 import { db } from "./db";
-import type { Role } from "@prisma/client";
+
+// Defined locally to avoid depending on prisma generate at build time
+type Role = "USER" | "ADMIN";
 
 // Extend NextAuth types to include role
 declare module "next-auth" {

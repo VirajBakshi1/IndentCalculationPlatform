@@ -1,5 +1,6 @@
 import { db } from "@/lib/db";
-import type { LogStatus } from "@prisma/client";
+
+type LogStatus = "SUCCESS" | "FAILED";
 
 interface LogEntry {
   userId?: string;
